@@ -10,6 +10,7 @@ function Scope() {
   this.$root = this
   this.$$children = []
   this.$$phase = null
+  this.$$listeners = {}
 
 }
 
@@ -255,6 +256,7 @@ Scope.prototype.$new = function(isolated, parent) {
   parent.$$children.push(child)
   child.$$watchers = []
   child.$$children = []
+  child.$$listeners = {}
   child.$parent = parent
   return child
 }
@@ -271,6 +273,7 @@ Scope.prototype.$$everyScope = function(fn) {
 }
 
 Scope.prototype.$destroy = function() {
+  this.$broadcast('$destroy')
   if (this.$parent) {
     let siblings = this.$parent.$$children
     let index = siblings.indexOf(this)
@@ -279,6 +282,7 @@ Scope.prototype.$destroy = function() {
     }
   }
   this.$$watchers = null
+  this.$$listeners = {}
 }
 
 Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
@@ -363,13 +367,81 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
   return this.$watch(internalWatchFn, internalListenerFn)
 }
 
+Scope.prototype.$on = function(eventName, listener) {
 
+  let listeners = this.$$listeners[eventName]
+  if (!listeners) {
+    this.$$listeners[eventName] = listeners = []
+  }
+  listeners.push(listener)
+  return function() {
+    let index = listeners.indexOf(listener)
+    if (index >= 0) {
+      listeners[index] = null
+    }
+  }
+}
 
+Scope.prototype.$emit = function(eventName) {
 
+  let propagationStopped = false
+  let event = {
+    name: eventName,
+    targetScope: this,
+    stopPropagation: function() {
+      propagationStopped = true
+    },
+    preventDefault: function() {
+      event.defaultPrevented = true
+    }
+   }
+  let listenerArgs = [event].concat(_.tail(arguments))
+  let scope = this
+  do {
+    event.currentScope = scope
+    scope.$$fireEventOnScope(eventName, listenerArgs)
+    scope = scope.$parent
+  } while (scope && !propagationStopped)
+  event.currentScope = null
+  return event
+}
 
+Scope.prototype.$broadcast = function(eventName) {
 
+  let event = {
+    name: eventName,
+    targetScope: this ,
+    preventDefault: function() {
+      event.defaultPrevented = true
+    }
+  }
+  let listenerArgs = [event].concat(_.tail(arguments))
+  this.$$everyScope(function(scope) {
+    event.currentScope = scope
+    scope.$$fireEventOnScope(eventName, listenerArgs)
+    return true
+  })
+  event.currentScope = null
+  return event
+}
 
+Scope.prototype.$$fireEventOnScope = function(eventName, listenerArgs) {
 
+  let listeners = this.$$listeners[eventName] || []
+  let i = 0
+  while (i < listeners.length) {
+    if (listeners[i] === null) {
+      listeners.splice(i, 1)
+    } else {
+      try {
+        listeners[i].apply(null, listenerArgs)
+      } catch (e) {
+        console.error(e)
+      }
+      i++
+    }
+  }
+}
 
 
 
