@@ -181,6 +181,8 @@ AST.prototype.primary = function() {
     return this.object()
   } else if (this.constants.hasOwnProperty(this.tokens[0].text)) {
     return this.constants[this.consume().text]
+  } else if (this.peek().identifier) {
+    return this.identifier()
   } else {
     return this.constant()
   }
@@ -221,7 +223,7 @@ AST.prototype.constant = function() {
   return { type: AST.Literal, value: this.consume().value }
 }
 AST.prototype.identifier = function() {
-  return { type: AST.Identifier, value: this.consume().text }
+  return { type: AST.Identifier, name: this.consume().text }
 }
 AST.prototype.expect = function(e) {
   let token = this.peek(e)
@@ -253,16 +255,19 @@ function ASTCompiler(astBuilder) {
 }
 
 ASTCompiler.prototype.stringEscapeRegex = /[^ a-zA-Z0-9]/g
+
 ASTCompiler.prototype.stringEscapeFn = function(c) {
   return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4)
 }
+
 ASTCompiler.prototype.compile = function(text) {
 
   let ast = this.astBuilder.ast(text)
   this.state = { body: [] }
   this.recurse(ast)
-  return new Function(this.state.body.join(''))
+  return new Function('s', this.state.body.join(''))
 }
+
 ASTCompiler.prototype.recurse = function(ast) {
 
   switch (ast.type) {
@@ -277,13 +282,16 @@ ASTCompiler.prototype.recurse = function(ast) {
       return `[${elements.join(',')}]`
     case AST.ObjectExpression:
       let properties = _.map(ast.properties, p => {
-        let key = p.key.tpye === AST.Identifier ? p.key.name : this.escape(p.key.value)
+        let key = p.key.type === AST.Identifier ? p.key.name : this.escape(p.key.value)
         let value = this.recurse(p.value)
         return key + ':' + value
       })
       return `{${properties.join(',')}}`
+    case AST.Identifier:
+      return this.nonComputedMember('s', ast.name)
   }
 }
+
 ASTCompiler.prototype.escape = function(value) {
   if (_.isString(value)) {
     return `'${value.replace(this.stringEscapeRegex, this.stringEscapeFn)}'`
@@ -294,6 +302,9 @@ ASTCompiler.prototype.escape = function(value) {
   }
 }
 
+ASTCompiler.prototype.nonComputedMember = function(left, right) {
+  return `(${left}).${right}`
+}
 /*
  Parser
  */

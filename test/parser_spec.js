@@ -125,6 +125,22 @@ describe('parser', function() {
     let fn = parse('{a:1, b:[2,3], c: { d:4 }}')
     expect(fn()).toEqual({a:1, b:[2,3], c: { d:4 }})
   })
+
+  it('looks up an attribute from the scope', function() {
+    let fn = parse('aKey')
+    expect(fn({ aKey: 12 })).toBe(12)
+    expect(fn({})).toBeUndefined()
+  })
+
+
+
+
+
+
+
+
+
+
 })
 
 
