@@ -199,7 +199,83 @@ describe('parser', function() {
     expect(fn({keys: {aKey: "theKey"}, lock: {theKey: 42}})).toBe(42)
   })
 
-  
+  it('parses a function call', function() {
+    let fn = parse('aFunction()')
+    expect(fn({ aFunction: function() { return 12 } })).toBe(12)
+  })
+
+  it('parses a function call with a single number argument', function() {
+    let fn = parse('aFunction(12)')
+    expect(fn({ aFunction: function(n) { return n }})).toBe(12)
+  })
+
+  it('parses a function call with a identifier argument', function() {
+    let fn = parse('aFunction(n)')
+    expect(fn({ aFunction: function(n) { return n }, n: 12 })).toBe(12)
+  })
+
+  it('parses a function call with a single function call argument', function() {
+    let fn = parse('aFunction(argFn())')
+    expect(fn({
+      aFunction: function(n) { return n },
+      argFn: _.constant(12)
+  })).toBe(12)})
+
+  it('parses a function call with multiple arguments', function() {
+    let fn = parse('aFunction(1, n, argFn())')
+    expect(fn({
+      n: 2,
+      aFunction: function(a, b, c) { return a + b + c },
+      argFn: _.constant(12)
+  })).toBe(15)})
+
+  it('calls methods accessed as computed properties', function() {
+    let scope = {
+      anObject: {
+        aMember: 12,
+        aFunc: function() {
+          return this.aMember
+        }
+      }
+    }
+    let fn = parse('anObject["aFunc"]()')
+    expect(fn(scope)).toBe(12)
+  })
+
+  it('calls methods accessed as non-computed properties', function() {
+    let scope = {
+      anObject: {
+        aMember: 12,
+        aFunc: function() {
+          return this.aMember
+        }
+      }
+    }
+    let fn = parse('anObject.aFunc()')
+    expect(fn(scope)).toBe(12)
+  })
+
+  it('binds bare functions to the scope', function() {
+    let scope = {
+      aFunc: function() {
+        return this
+      }
+    }
+    let fn = parse('aFunc()')
+    expect(fn(scope)).toBe(scope)
+  })
+
+  it('binds bare functions on locals to the locals', function() {
+    let scope = {}
+    let locals = {
+      aFunc: function() {
+        return this
+      }
+    }
+    let fn = parse('aFunc()')
+    expect(fn(scope, locals)).toBe(locals)
+  })
+
 })
 
 
