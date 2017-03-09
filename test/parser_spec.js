@@ -132,12 +132,30 @@ describe('parser', function() {
     expect(fn({})).toBeUndefined()
   })
 
+  it('returns undefined when looking up attribute from undefined', function() {
+    let fn = parse('aKey')
+    expect(fn()).toBeUndefined()
+  })
 
+  it('will parse "this"', function() {
+    let fn = parse('this')
+    let scope = {}
+    expect(fn(scope)).toBe(scope)
+    expect(fn()).toBeUndefined()
+  })
 
+  it ('looks up a 2-part identifier path from the scope', function() {
 
+    let fn = parse('aKey.anotherKey')
+    expect(fn({aKey: { anotherKey: 42}})).toBe(42)
+    expect(fn({aKey: {}})).toBeUndefined()
+    expect(fn({})).toBeUndefined()
+  })
 
-
-
+  it ('looks up a member from an object', function() {
+    let fn = parse('{ aKey: 42 }.aKey')
+    expect(fn()).toBe(42)
+  })
 
 
 
