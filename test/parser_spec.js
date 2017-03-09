@@ -157,8 +157,49 @@ describe('parser', function() {
     expect(fn()).toBe(42)
   })
 
+  it ('uses locals instead of scope when there is a matching key', function() {
+    let fn = parse('aKey')
+    let scope = { aKey: 11 }
+    let locals = { aKey: 12 }
+    expect(fn(scope, locals)).toBe(12)
+  })
 
+  it ('does not use locals instead of scope when no matching key', function() {
+    let fn = parse('aKey')
+    let scope = { aKey: 11 }
+    let locals = { anotherKey: 12 }
+    expect(fn(scope, locals)).toBe(11)
+  })
 
+  it('uses locals instead of scope when the first part matches', function() {
+
+    let fn = parse('aKey.anotherKey')
+    let scope = { aKey: { anotherKey: 42 } }
+    let locals = { aKey: {} }
+    expect(fn(scope, locals)).toBeUndefined()
+  })
+
+  it('parses a simple computed property access', function() {
+    let fn = parse('aKey["anotherKey"]')
+    expect(fn({aKey: {anotherKey: 12}})).toBe(12)
+  })
+
+  it('parses a computed numeric array access', function() {
+    let fn = parse('arr[1]')
+    expect(fn({ arr: [1, 2, 3]})).toBe(2)
+  })
+
+  it('parses a computed access with another key as property', function() {
+    let fn = parse('lock[key]')
+    expect(fn({ key: 'theKey', lock: { theKey: 12 }})).toBe(12)
+  })
+
+  it('parses computed access with another access as property', function() {
+    let fn = parse('lock[keys["aKey"]]')
+    expect(fn({keys: {aKey: "theKey"}, lock: {theKey: 42}})).toBe(42)
+  })
+
+  
 })
 
 
