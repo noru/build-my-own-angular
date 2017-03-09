@@ -276,6 +276,48 @@ describe('parser', function() {
     expect(fn(scope, locals)).toBe(locals)
   })
 
+  it('parses a simple attribute assignment', function() {
+    let fn = parse('attr = 12')
+    let scope = {}
+    fn(scope)
+    expect(scope.attr).toBe(12)
+  })
+
+  it('can assign any primary expression', function() {
+    let fn = parse('attr = aFunc()')
+    let scope = { aFunc: _.constant(12) }
+    fn(scope)
+    expect(scope.attr).toBe(12)
+  })
+
+  it('can assign a computed object property', function() {
+    let fn = parse('anObject["attr"] = 12')
+    let scope = { anObject: {} }
+    fn(scope)
+    expect(scope.anObject.attr).toBe(12)
+  })
+
+  it('can assign a non-computed object property', function() {
+    let fn = parse('anObject.attr = 12')
+    let scope = { anObject: {} }
+    fn(scope)
+    expect(scope.anObject.attr).toBe(12)
+  })
+
+  it('can assign a nested object property', function() {
+    let fn = parse('arr[0]["attr"] = 12')
+    let scope = { arr: [{}] }
+    fn(scope)
+    expect(scope.arr[0].attr).toBe(12)
+  })
+
+  it('creates the objects in the assignment path that do not exist', function() {
+    let fn = parse('some["nested"].property.path = 12')
+    var scope = {}
+    fn(scope)
+    expect(scope.some.nested.property.path).toBe(12)
+  })
+
 })
 
 
