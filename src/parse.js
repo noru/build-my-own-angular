@@ -1,6 +1,24 @@
 
 const ESCAPES = { 'n': '\n', 'f': '\f', 'r': '\r', 't': '\t', 'v': '\v', '\'': '\'', '"': '"' }
-
+const OPERATOR = {
+  '+': true,
+  '!': true,
+  '-': true,
+  '*': true,
+  '/': true,
+  '%': true,
+  '=': true,
+  '==': true,
+  '!=': true,
+  '===': true,
+  '!==': true,
+  '<': true,
+  '>': true,
+  '<=': true,
+  '>=': true,
+  '&&': true,
+  '||': true,
+}
 /*
   Lexer
  */
@@ -22,7 +40,7 @@ Lexer.prototype.lex = function(text) {
       this.readNumber()
     } else if (this.is('\'"')) {
       this.readString(this.ch)
-    } else if (this.is('[]{},:.()=')) {
+    } else if (this.is('[]{},:.()?;')) {
       this.tokens.push({ text: this.ch })
       this.index++
     } else if (this.isIdent(this.ch)) {
@@ -30,7 +48,19 @@ Lexer.prototype.lex = function(text) {
     } else if (this.isWhitespace(this.ch)) {
       this.index++
     } else {
-      throw 'Unexpected next char: ' + this.ch
+      let ch = this.ch
+      let ch2 = this.ch + this.peek()
+      let ch3 = this.ch + this.peek() + this.peek(2)
+      let op = OPERATOR[ch]
+      let op2 = OPERATOR[ch2]
+      let op3 = OPERATOR[ch3]
+      if (op || op2 || op3) {
+        let token = op3 ? ch3 : (op2 ? ch2 : ch)
+        this.tokens.push({text: token})
+        this.index += token.length
+      } else {
+        throw 'Unexpected next char: ' + this.ch
+      }
     }
   }
   return this.tokens
@@ -40,8 +70,9 @@ Lexer.prototype.is = function(chs) {
   return chs.indexOf(this.ch) >= 0
 }
 
-Lexer.prototype.peek = function() {
-  return this.index < this.text.length - 1 ? this.text.charAt(this.index + 1) : false
+Lexer.prototype.peek = function(n) {
+  n = n || 1
+  return this.index + n < this.text.length ? this.text.charAt(this.index + n) : false
 }
 
 Lexer.prototype.isNumber = function(ch) {
@@ -80,9 +111,11 @@ Lexer.prototype.readString = function(quote) {
 
   this.index++
   let string = ''
+  let rawString = quote
   let escape = false
   while (this.index < this.text.length) {
     let ch = this.text.charAt(this.index)
+    rawString += ch
     if (escape) {
       if (ch === 'u') {
         let hex = this.text.substring(this.index + 1, this.index + 5)
@@ -103,7 +136,7 @@ Lexer.prototype.readString = function(quote) {
     } else if (ch === quote) {
       this.index++
       this.tokens.push({
-        text: string,
+        text: rawString,
         value: string
       })
       return
@@ -163,6 +196,10 @@ AST.ThisExpression = Symbol()
 AST.MemberExpression = Symbol()
 AST.CallExpression = Symbol()
 AST.AssignmentExpression = Symbol()
+AST.UnaryExpression = Symbol()
+AST.BinaryExpression = Symbol()
+AST.LogicalExpression = Symbol()
+AST.ConditionalExpression = Symbol()
 
 AST.prototype.constants = {
   'null': { type: AST.Literal, value: null },
@@ -178,13 +215,25 @@ AST.prototype.ast = function(text) {
 }
 
 AST.prototype.program = function() {
+  let body = []
+  while (true) {
+    if (this.tokens.length) {
+      body.push(this.assignment())
+    }
+    if (!this.expect(';')) {
+      return { type: AST.Program, body: body }
+    }
+  }
   return { type: AST.Program, body: this.assignment() }
 }
 
 AST.prototype.primary = function() {
 
   let primary
-  if (this.expect('[')) {
+  if (this.expect('(')) {
+    primary = this.assignment()
+    this.consume(')')
+  } else if (this.expect('[')) {
     primary = this.arrayDeclaration()
   } else if (this.expect('{')) {
     primary = this.object()
@@ -286,6 +335,7 @@ AST.prototype.peek = function(e1, e2, e3, e4) {
     }
   }
 }
+
 AST.prototype.parseArguments = function() {
   let args = []
   if (!this.peek(')')) {
@@ -295,13 +345,128 @@ AST.prototype.parseArguments = function() {
   }
   return args
 }
+
 AST.prototype.assignment = function() {
-  let left = this.primary()
+  let left = this.ternary()
   if (this.expect('=')) {
-    let right = this.primary()
+    let right = this.ternary()
     return  { type: AST.AssignmentExpression, left: left, right: right }
   }
   return left
+}
+
+AST.prototype.unary = function() {
+  let token
+  if ((token = this.expect('+', '!', '-'))) {
+    return {
+      type: AST.UnaryExpression,
+      operator: token.text,
+      argument: this.unary()
+    }
+  } else {
+    return this.primary()
+  }
+}
+
+AST.prototype.multiplicative = function() {
+  let left = this.unary()
+  let token
+  while ((token = this.expect('*', '/', '%'))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.unary()
+    }
+  }
+  return left
+}
+
+AST.prototype.additive = function() {
+  let left = this.multiplicative()
+  let token
+  while ((token = this.expect('+')) || (token = this.expect('-'))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.multiplicative()
+    }
+  }
+  return left
+}
+
+AST.prototype.equality = function() {
+  let left = this.relational()
+  let token
+  while ((token = this.expect('==', '!=', '===', '!=='))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.relational()
+    }
+  }
+  return left
+}
+
+AST.prototype.relational = function() {
+  let left = this.additive()
+  let token
+  while ((token = this.expect('<', '<=', '>', '>='))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.additive()
+    }
+  }
+  return left
+}
+
+AST.prototype.logicalOR = function() {
+  let left = this.logicalAND()
+  let token
+  while ((token = this.expect('||'))) {
+    left = {
+      type: AST.LogicalExpression,
+      left: left,
+      operator: token.text,
+      right: this.logicalAND()
+    }
+  }
+  return left
+}
+
+AST.prototype.logicalAND = function() {
+  let left = this.equality()
+  let token
+  while ((token = this.expect('&&'))) {
+    left = {
+      type: AST.LogicalExpression,
+      left: left,
+      operator: token.text,
+      right: this.equality()
+    }
+  }
+  return left
+}
+
+AST.prototype.ternary = function() {
+  let test = this.logicalOR()
+  if (this.expect('?')) {
+    let consequent = this.assignment()
+    if (this.consume(':')) {
+      let alternate = this.assignment()
+      return {
+        type: AST.ConditionalExpression,
+        test: test,
+        consequent: consequent,
+        alternate: alternate
+      }
+    }
+  }
+  return test
 }
 
 /*
@@ -332,7 +497,8 @@ ASTCompiler.prototype.compile = function(text) {
     'ensureSafeMemberName',
     'ensureSafeObject',
     'ensureSafeFunction',
-    fnString)(ensureSafeMemberName, ensureSafeObject, ensureSafeFunction)
+    'ifDefined',
+    fnString)(ensureSafeMemberName, ensureSafeObject, ensureSafeFunction, ifDefined)
 }
 
 ASTCompiler.prototype.recurse = function(ast, context, create) {
@@ -341,7 +507,8 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
 
   switch (ast.type) {
     case AST.Program:
-      this.state.body.push('return ', this.recurse(ast.body), ';')
+      _.forEach(_.initial(ast.body), stmt => this.state.body.push(this.recurse(stmt), ';'))
+      this.state.body.push('return ', this.recurse(_.last(ast.body)), ';')
       break
 
     case AST.Literal:
@@ -454,6 +621,28 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
         leftExpr = this.nonComputedMember(leftContext.context, leftContext.name)
       }
       return this.assign(leftExpr, `ensureSafeObject(${this.recurse(ast.right)})`)
+
+    case AST.UnaryExpression:
+      return ast.operator + `(${this.ifDefined(this.recurse(ast.argument), 0)})`
+
+    case AST.BinaryExpression:
+      if (ast.operator === '+' || ast.operator === '-') {
+        return `(${this.ifDefined(this.recurse(ast.left), 0)})${ast.operator}(${this.ifDefined(this.recurse(ast.right), 0)})`
+      } else {
+        return `(${this.recurse(ast.left)})${ast.operator}(${this.recurse(ast.right)})`
+      }
+    case AST.LogicalExpression:
+      intoId = this.nextId()
+      this.state.body.push(this.assign(intoId, this.recurse(ast.left)))
+      this.if_(ast.operator === '&&' ? intoId : this.not(intoId), this.assign(intoId, this.recurse(ast.right)))
+      return intoId
+    case AST.ConditionalExpression:
+      intoId = this.nextId()
+      let testId = this.nextId()
+      this.state.body.push(this.assign(testId, this.recurse(ast.test)))
+      this.if_(testId, this.assign(intoId, this.recurse(ast.consequent)))
+      this.if_(this.not(testId), this.assign(intoId, this.recurse(ast.alternate)))
+      return intoId
   }
 }
 
@@ -493,6 +682,9 @@ ASTCompiler.prototype.not = function(e) {
   return `!(${e})`
 }
 
+ASTCompiler.prototype.ifDefined = function(value, defaultValue) {
+  return `ifDefined(${value}, ${this.escape(defaultValue)})`
+}
 ASTCompiler.prototype.getHasOwnProperty = function(obj, property) {
   return `${obj}&&(${this.escape(property)} in ${obj})`
 }
@@ -566,4 +758,8 @@ function ensureSafeFunction(obj) {
     }
   }
   return obj
+}
+
+function ifDefined(value, defaultValue) {
+  return typeof value === 'undefined' ? defaultValue : value
 }
