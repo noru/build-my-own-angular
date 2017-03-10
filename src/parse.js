@@ -322,8 +322,17 @@ ASTCompiler.prototype.compile = function(text) {
   let ast = this.astBuilder.ast(text)
   this.state = { body: [], nextId: 0, vars: [] }
   this.recurse(ast)
-  let vars = this.state.vars.length ? `var ${this.state.vars.join(',')};` : ''
-  return new Function('s', 'l', vars + this.state.body.join(''))
+  let fnString = 'let fn=function(s,l){' +
+    (this.state.vars.length ?
+      'let ' + this.state.vars.join(',') + ';' : ''
+    ) +
+    this.state.body.join('') +
+    '};return fn;'
+  return new Function(
+    'ensureSafeMemberName',
+    'ensureSafeObject',
+    'ensureSafeFunction',
+    fnString)(ensureSafeMemberName, ensureSafeObject, ensureSafeFunction)
 }
 
 ASTCompiler.prototype.recurse = function(ast, context, create) {
@@ -351,6 +360,7 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
       return `{${properties.join(',')}}`
 
     case AST.Identifier:
+      ensureSafeMemberName(ast.name)
       intoId = this.nextId()
       this.if_(
         this.getHasOwnProperty('l', ast.name),
@@ -373,6 +383,7 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
         context.name = ast.name
         context.computed = false
       }
+      this.addEnsureSafeObject(intoId)
       return intoId
 
     case AST.ThisExpression:
@@ -386,25 +397,31 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
       }
       if (ast.computed) {
         let right = this.recurse(ast.property)
+        this.addEnsureSafeMemberName(right)
         if (create) {
           this.if_(
             this.not(this.computedMember(left, right)),
             this.assign(this.computedMember(left, right), '{}')
           )
         }
-        this.if_(left, this.assign(intoId, this.computedMember(left, right)))
+        this.if_(left, this.assign(intoId,
+          `ensureSafeObject(${this.computedMember(left, right)})`
+        ))
         if (context) {
           context.name = right
           context.computed = true
         }
       } else {
+        ensureSafeMemberName(ast.property.name)
         if (create) {
           this.if_(
             this.not(this.nonComputedMember(left, ast.property.name)),
             this.assign(this.nonComputedMember(left, ast.property.name), '{}')
           )
         }
-        this.if_(left, this.assign(intoId, this.nonComputedMember(left, ast.property.name)))
+        this.if_(left, this.assign(intoId,
+          `ensureSafeObject(${this.nonComputedMember(left, ast.property.name)})`
+        ))
         if (context) {
           context.name = ast.property.name
           context.computed = false
@@ -415,15 +432,17 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
     case AST.CallExpression:
       let callContext = {}
       let callee = this.recurse(ast.callee, callContext)
-      let args = _.map(ast.arguments, arg => this.recurse(arg))
+      let args = _.map(ast.arguments, arg => `ensureSafeObject(${this.recurse(arg)})`)
       if (callContext.name) {
+        this.addEnsureSafeObject(callContext.context)
         if (callContext.computed) {
           callee = this.computedMember(callContext.context, callContext.name)
         } else {
           callee = this.nonComputedMember(callContext.context, callContext.name)
         }
       }
-      return `${callee}&&${callee}(${args.join(',')})`
+      this.addEnsureSafeFunction(callee)
+      return `${callee}&&ensureSafeObject(${callee}(${args.join(',')}))`
 
     case AST.AssignmentExpression:
       let leftContext = {}
@@ -434,7 +453,7 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
       } else {
         leftExpr = this.nonComputedMember(leftContext.context, leftContext.name)
       }
-      return this.assign(leftExpr, this.recurse(ast.right))
+      return this.assign(leftExpr, `ensureSafeObject(${this.recurse(ast.right)})`)
   }
 }
 
@@ -477,6 +496,16 @@ ASTCompiler.prototype.not = function(e) {
 ASTCompiler.prototype.getHasOwnProperty = function(obj, property) {
   return `${obj}&&(${this.escape(property)} in ${obj})`
 }
+
+ASTCompiler.prototype.addEnsureSafeMemberName = function(expr) {
+  this.state.body.push(`ensureSafeMemberName(${expr});`)
+}
+ASTCompiler.prototype.addEnsureSafeObject = function(expr) {
+  this.state.body.push(`ensureSafeObject(${expr});`)
+}
+ASTCompiler.prototype.addEnsureSafeFunction = function(expr) {
+  this.state.body.push(`ensureSafeFunction(${expr});`)
+}
 /*
  Parser
  */
@@ -494,4 +523,47 @@ function parse(expr) {
   let lexer = new Lexer
   let parser = new Parser(lexer)
   return parser.parse(expr)
+}
+
+function ensureSafeMemberName(name) {
+  let banned = new Set([
+    'constructor',
+    '__proto__',
+    '__defineSetter__',
+    '__defineGetter__',
+    '__lookupGetter__',
+    '__lookupSetter__',
+  ]);
+  if (banned.has(name)) {
+    throw 'Attempting to access a disallowed field'
+  }
+}
+
+function ensureSafeObject(obj) {
+  if (obj) {
+    if (obj.document && obj.location && obj.alert && obj.setInterval) {
+      throw 'Referencing window in expressions is not allowed'
+    } else if (obj.children && (obj.nodeName || (obj.prop && obj.attr && obj.find))) {
+      throw 'Referencing DOM in expressions is not allowed'
+    } else if (obj.constructor === obj) {
+      throw 'Referencing Function in expressions is not allowed'
+    } else if (obj.getOwnPropertyName || obj.getOwnPropertyDescriptor) {
+      throw 'Referencing Object in expressions is not allowed'
+    }
+  }
+  return obj
+}
+
+const CALL = Function.prototype.call
+const APPLY = Function.prototype.apply
+const BIND = Function.prototype.bind
+function ensureSafeFunction(obj) {
+  if (obj) {
+    if (obj.constructor === obj) {
+      throw 'Referencing Function in expressions is not allowed'
+    } else if (obj === CALL || obj === APPLY || obj === BIND) {
+      throw 'Referencing call, apply, or bind in expressions is not allowed'
+    }
+  }
+  return obj
 }

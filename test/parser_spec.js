@@ -318,6 +318,130 @@ describe('parser', function() {
     expect(scope.some.nested.property.path).toBe(12)
   })
 
+  it('does not allow calling the function constructor', function() {
+    expect(function() {
+      let fn = parse('aFunction.constructor("return window;")()')
+      fn({ aFunction: function() { }})
+    }).toThrow()
+  })
+
+  it('does not allow accessing __proto__', function() {
+    expect(function() {
+      let fn = parse('obj.__proto__')
+      fn({ obj: {} })
+    }).toThrow()
+  })
+
+  it('does not allow accessing __defineGetter__', function() {
+    expect(function() {
+      let fn = parse('obj.__defineGetter__("evil", fn)')
+      fn({ obj: {}, fn: function() {} })
+    }).toThrow()
+  })
+
+  it('does not allow accessing __defineSetter__', function() {
+    expect(function() {
+      let fn = parse('obj.__defineSetter__("evil", fn)')
+      fn({ obj: {}, fn: function() {} })
+    }).toThrow()
+  })
+
+  it('does not allow accessing __lookupGetter__', function() {
+    expect(function() {
+      let fn = parse('obj.__lookupGetter__("evil")')
+      fn({ obj: {} })
+    }).toThrow()
+  })
+
+  it('does not allow accessing __lookupSetter__', function() {
+    expect(function() {
+      let fn = parse('obj.__lookupSetter__("evil")')
+      fn({ obj: {} })
+    }).toThrow()
+  })
+
+  it('forbids accessing window as computed property', function() {
+    let fn = parse('anObject["wnd"]')
+    expect(function() { fn({anObject: { wnd: window } }) }).toThrow()
+  })
+
+  it('forbids accessing window as non-computed property', function() {
+    let fn = parse('anObject.wnd')
+    expect(function() { fn({anObject: { wnd: window } }) }).toThrow()
+  })
+
+  it('does not allow passing window as function argument', function() {
+    let fn = parse('aFunction(wnd)')
+    expect(function() {
+      fn({ aFunction: function() {}, wnd: window })
+    }).toThrow()
+  })
+
+  it('does not allow calling methods on window', function() {
+    let fn = parse('wnd.scrollTo(0, 0)')
+    expect(function () {
+      fn({wnd: window})
+    }).toThrow()
+  })
+
+  it('does not allow functions to return window', function() {
+    let fn = parse('getWnd()')
+    expect(function() {
+      fn({ getWnd: _.constant(window) })
+    }).toThrow()
+  })
+
+  it('does not allow assignment on window', function() {
+    let fn = parse('wnd = anObject')
+    expect(function() {
+      fn({ anObject: window })
+    }).toThrow()
+  })
+
+  it('does not allow Referencing window', function() {
+    let fn = parse('wnd')
+    expect(function() {
+      fn({wnd: window})
+    }).toThrow()
+  })
+
+  it('does not allow calling functions on DOM elements', function() {
+    let fn = parse('el.setAttribute("evil", "true")')
+    expect(function () {
+      fn({ el: document.documentElement })
+    }).toThrow()
+  })
+
+  it('does not allow calling the alias function constructor', function() {
+    let fn = parse('fnConstructor("return window;")')
+    expect(function() {
+      fn({fnConstructor: (function(){}).constructor })
+    }).toThrow()
+  })
+
+  it('does not allow calling functions on Object', function() {
+    let fn = parse('obj.create({})')
+    expect(function() {
+      fn({ obj: Object })
+    }).toThrow()
+  })
+
+  it('does not allow calling `call`', function() {
+    let fn = parse('fun.call(obj)')
+    expect(function() {
+      fn({ fun: function(){}, obj: {}})
+    }).toThrow()
+  })
+
+  it('does not allow calling `apply`', function() {
+    let fn = parse('fun.call(obj)')
+    expect(function() {
+      fn({ fun: function(){}, obj: {}})
+    }).toThrow()
+  })
+
+
+
 })
 
 
