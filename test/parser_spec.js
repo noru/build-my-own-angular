@@ -616,39 +616,40 @@ describe('parser', function() {
     expect(parse('a=1; b = 2; a+b')({})).toBe(3)
   })
 
+  it('can parse filter expressions', function() {
+    register('upcase', function() {
+      return function(str) {
+        return str.toUpperCase()
+      }
+    })
+    let fn = parse('aString | upcase')
+    expect(fn({aString: 'Hello'})).toEqual('HELLO')
+  })
+
+  it('can parse filter chain expressions', function() {
+    register('upcase', function() {
+      return s => s.toUpperCase()
+    })
+    register('exclamate', function() {
+      return s => s + '!'
+    })
+    let fn = parse('"Hello" | upcase | exclamate')
+    expect(fn()).toEqual('HELLO!')
+  })
+
+  it('can pass an additional argument to filters', function() {
+    register('repeat', function() {
+      return (s, times) => _.repeat(s, times)
+    })
+    let fn = parse('"hello" | repeat:3')
+    expect(fn()).toEqual('hellohellohello')
+  })
+
+  it('can pass several additional arguments to filters', function() {
+    register('surround', function() {
+      return (s, left, right) => left + s + right
+    })
+    let fn = parse('"hello" | surround:"*":"!"')
+    expect(fn()).toEqual('*hello!')
+  })
 })
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// eof

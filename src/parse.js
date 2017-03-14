@@ -18,6 +18,7 @@ const OPERATOR = {
   '>=': true,
   '&&': true,
   '||': true,
+  '|': true,
 }
 /*
   Lexer
@@ -218,7 +219,7 @@ AST.prototype.program = function() {
   let body = []
   while (true) {
     if (this.tokens.length) {
-      body.push(this.assignment())
+      body.push(this.filter())
     }
     if (!this.expect(';')) {
       return { type: AST.Program, body: body }
@@ -231,7 +232,7 @@ AST.prototype.primary = function() {
 
   let primary
   if (this.expect('(')) {
-    primary = this.assignment()
+    primary = this.filter()
     this.consume(')')
   } else if (this.expect('[')) {
     primary = this.arrayDeclaration()
@@ -245,7 +246,7 @@ AST.prototype.primary = function() {
     primary = this.constant()
   }
   let next
-  while (next = this.expect('.', '[', '(')) {
+  while ((next = this.expect('.', '[', '('))) {
 
     if (next.text === '[') {
       primary = {
@@ -469,6 +470,23 @@ AST.prototype.ternary = function() {
   return test
 }
 
+AST.prototype.filter = function() {
+  let left = this.assignment()
+  while (this.expect('|')) {
+    let args = [left]
+    left = {
+      type: AST.CallExpression,
+      callee: this.identifier(),
+      arguments: args,
+      filter: true
+    }
+    while (this.expect(':')) {
+      args.push(this.assignment())
+    }
+  }
+  return left
+}
+
 /*
   AST compiler
  */
@@ -485,9 +503,10 @@ ASTCompiler.prototype.stringEscapeFn = function(c) {
 ASTCompiler.prototype.compile = function(text) {
 
   let ast = this.astBuilder.ast(text)
-  this.state = { body: [], nextId: 0, vars: [] }
+  this.state = { body: [], nextId: 0, vars: [], filters: {} }
   this.recurse(ast)
-  let fnString = 'let fn=function(s,l){' +
+  let fnString = this.filterPrefix() +
+    'let fn=function(s,l){' +
     (this.state.vars.length ?
       'let ' + this.state.vars.join(',') + ';' : ''
     ) +
@@ -498,7 +517,8 @@ ASTCompiler.prototype.compile = function(text) {
     'ensureSafeObject',
     'ensureSafeFunction',
     'ifDefined',
-    fnString)(ensureSafeMemberName, ensureSafeObject, ensureSafeFunction, ifDefined)
+    'filter',
+    fnString)(ensureSafeMemberName, ensureSafeObject, ensureSafeFunction, ifDefined, filter)
 }
 
 ASTCompiler.prototype.recurse = function(ast, context, create) {
@@ -597,20 +617,27 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
       return intoId
 
     case AST.CallExpression:
-      let callContext = {}
-      let callee = this.recurse(ast.callee, callContext)
-      let args = _.map(ast.arguments, arg => `ensureSafeObject(${this.recurse(arg)})`)
-      if (callContext.name) {
-        this.addEnsureSafeObject(callContext.context)
-        if (callContext.computed) {
-          callee = this.computedMember(callContext.context, callContext.name)
-        } else {
-          callee = this.nonComputedMember(callContext.context, callContext.name)
+      let callContext, callee, args
+      if (ast.filter) {
+        callee = this.filter(ast.callee.name)
+        args = _.map(ast.arguments,arg => this.recurse(arg))
+        return `${callee}(${args})`
+      } else {
+        let callContext = {}
+        let callee = this.recurse(ast.callee, callContext)
+        let args = _.map(ast.arguments, arg => `ensureSafeObject(${this.recurse(arg)})`)
+        if (callContext.name) {
+          this.addEnsureSafeObject(callContext.context)
+          if (callContext.computed) {
+            callee = this.computedMember(callContext.context, callContext.name)
+          } else {
+            callee = this.nonComputedMember(callContext.context, callContext.name)
+          }
         }
+        this.addEnsureSafeFunction(callee)
+        return `${callee}&&ensureSafeObject(${callee}(${args.join(',')}))`
       }
-      this.addEnsureSafeFunction(callee)
-      return `${callee}&&ensureSafeObject(${callee}(${args.join(',')}))`
-
+      break
     case AST.AssignmentExpression:
       let leftContext = {}
       this.recurse(ast.left, leftContext, true)
@@ -631,6 +658,7 @@ ASTCompiler.prototype.recurse = function(ast, context, create) {
       } else {
         return `(${this.recurse(ast.left)})${ast.operator}(${this.recurse(ast.right)})`
       }
+      break
     case AST.LogicalExpression:
       intoId = this.nextId()
       this.state.body.push(this.assign(intoId, this.recurse(ast.left)))
@@ -660,9 +688,11 @@ ASTCompiler.prototype.assign = function(id, value) {
   return id + '=' + value + ';'
 }
 
-ASTCompiler.prototype.nextId = function() {
+ASTCompiler.prototype.nextId = function(skip) {
   let id = 'v' + (this.state.nextId++)
-  this.state.vars.push(id)
+  if (!skip) {
+    this.state.vars.push(id)
+  }
   return id
 }
 
@@ -698,6 +728,23 @@ ASTCompiler.prototype.addEnsureSafeObject = function(expr) {
 ASTCompiler.prototype.addEnsureSafeFunction = function(expr) {
   this.state.body.push(`ensureSafeFunction(${expr});`)
 }
+ASTCompiler.prototype.filter = function(name) {
+  if (!this.state.filters.hasOwnProperty('name')) {
+    this.state.filters[name] = this.nextId(true)
+  }
+  return this.state.filters[name]
+}
+ASTCompiler.prototype.filterPrefix = function() {
+  if (_.isEmpty(this.state.filters)) {
+    return ''
+  } else {
+    let parts = _.map(this.state.filters, (varName, filterName) => {
+      return `${varName}=filter(${this.escape(filterName)})`
+    })
+    return 'var ' + parts.join(',') + ';'
+  }
+}
+
 /*
  Parser
  */
